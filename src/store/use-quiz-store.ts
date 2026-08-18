@@ -4,6 +4,7 @@ import { create } from 'zustand';
 
 import { BtlError } from '@/lib/btl';
 import { getQuiz, insertQuizResult, listQuizResults, saveQuiz } from '@/lib/db';
+import { hydraRemember } from '@/lib/hydra';
 import { hashContent } from '@/lib/hash';
 import { generateQuiz, shuffleQuestionOptions } from '@/lib/quizgen';
 import { combineContent, DEFAULT_QUIZ_COUNT } from '@/lib/quiz-sources';
@@ -191,6 +192,13 @@ export const useQuizStore = create<QuizState>((set, get) => ({
     } catch (err) {
       console.warn('[quiz] failed to persist result', err);
     }
+
+    // Write the misses into the student's Memory lane so the graph knows what
+    // they struggle with, not just what their notes say. This is what lets Weak
+    // Topics trace a failure back to a concept the quiz never covered.
+    // Fire-and-forget: a failed sync must never block the result screen.
+    void rememberMisses(result);
+
     set((s) => ({
       results: [result, ...s.results],
       review: { sourceLabel: attempt.sourceLabel, missed: attempt.missed },
@@ -198,3 +206,33 @@ export const useQuizStore = create<QuizState>((set, get) => ({
     return result;
   },
 }));
+
+/** Record a finished attempt's misses as memories, one per weak topic.
+ *
+ *  The id is deterministic (topic + day) so retaking a quiz on the same topic
+ *  updates that memory instead of stacking near-duplicates — the graph should
+ *  reflect that a student is weak on a topic, not how many times they proved it.
+ *
+ *  Silent on failure by design: this is enrichment, not the source of truth.
+ *  SQLite already holds the result. */
+async function rememberMisses(result: QuizResult): Promise<void> {
+  if (result.weakTopics.length === 0) return;
+
+  const day = result.createdAt.slice(0, 10);
+  const scored = `${result.correct} of ${result.total}`;
+
+  try {
+    await hydraRemember(
+      result.weakTopics.map((topic) => ({
+        id: `quiz-miss-${day}-${topic.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        title: `Struggled with ${topic}`,
+        text:
+          `On ${day} the student answered a ${topic} question incorrectly in a ` +
+          `${result.sourceLabel} quiz, scoring ${scored} overall. ` +
+          `${topic} is a topic they need to review.`,
+      })),
+    );
+  } catch (err) {
+    console.warn('[quiz] failed to sync misses to HydraDB', err);
+  }
+}

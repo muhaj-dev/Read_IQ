@@ -1,18 +1,23 @@
 // Retrieval — the gate behind "answers only from your notes".
 //
-// UI-only build: this is LEXICAL retrieval (IDF-weighted keyword overlap) and is
-// fully local — no embeddings, no network, no AI. An empty result is the honest
-// "not in your notes", which is what stops Ask from answering ungrounded.
+// Two paths behind one signature. The primary path is GRAPH retrieval: HydraDB
+// holds a concept graph built from the notes, so a question pulls in chunks that
+// are *connected* to it, not only ones that repeat its words — that is what lets
+// Ask reach a prerequisite the question never named.
 //
-// A semantic path (embed the question, cosine-rank stored note vectors) can be
-// added later behind the same `retrieveTopK` signature, leaving every caller
-// untouched.
+// The fallback is LEXICAL retrieval (IDF-weighted keyword overlap), fully local
+// and offline. It runs when HydraDB is unconfigured or unreachable, so the app
+// degrades instead of failing.
+//
+// Either way an empty result is the honest "not in your notes", which is what
+// stops Ask from answering ungrounded.
 
 import { useNotesStore } from '@/store/use-notes-store';
 import type { Note } from '@/types/note';
 import type { NoteChunk, RetrievalHit } from '@/types/retrieval';
 
 import { chunkNote } from './chunk';
+import { hydraQuery, isHydraConfigured, type HydraChunk } from './hydra';
 
 // --- Grounding gates ---------------------------------------------------------
 /** Minimum weighted-overlap score to count as a real match. */
@@ -127,13 +132,44 @@ export function lexicalTopK(query: string, notes: Note[], k = 4): RetrievalHit[]
 /** Top-K note chunks for a question, best-first. Returns `[]` when nothing clears the
  *  grounding gate — the caller shows the honest fallback.
  *
- *  UI-only build: this is plain local keyword matching — no embeddings, no network,
- *  no AI. A semantic (vector) path can be layered on later without changing this
- *  signature or any caller. */
+ *  Tries the HydraDB graph first and falls back to local keyword matching. Callers
+ *  see one signature and never need to know which path answered. */
 export async function retrieveTopK(query: string, k = 4): Promise<RetrievalHit[]> {
   const q = query.trim();
-  const { notes } = useNotesStore.getState();
-  if (!q || notes.length === 0) return [];
+  if (!q) return [];
 
+  const { notes } = useNotesStore.getState();
+
+  // Graph-native path: HydraDB walks the concept graph and returns the chunks
+  // around the question, not just the ones that share its words. Falls through
+  // to the local lexical scorer when unconfigured or unreachable, so the app
+  // still answers offline.
+  if (isHydraConfigured()) {
+    try {
+      const { chunks } = await hydraQuery(q, { maxResults: k });
+      const hits = chunks.map((c) => toHit(c, notes));
+      if (hits.length > 0) return hits.slice(0, k);
+    } catch {
+      // Fall back rather than surface a network error as "not in your notes".
+    }
+  }
+
+  if (notes.length === 0) return [];
   return lexicalTopK(q, notes, k);
+}
+
+/** Resolve a HydraDB chunk back to a local note so citations stay tappable.
+ *  Notes ingested by the app carry their ReadIQ id, but seeded documents only
+ *  match on title — those cite by HydraDB's source id and simply don't deep-link. */
+function toHit(chunk: HydraChunk, notes: Note[]): RetrievalHit {
+  const local =
+    notes.find((n) => n.id === chunk.sourceId) ??
+    notes.find((n) => n.title.trim().toLowerCase() === chunk.title.trim().toLowerCase());
+
+  return {
+    noteId: local?.id ?? chunk.sourceId,
+    noteTitle: local?.title ?? chunk.title,
+    text: chunk.text,
+    score: chunk.score,
+  };
 }
