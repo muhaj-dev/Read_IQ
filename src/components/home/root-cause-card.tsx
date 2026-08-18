@@ -8,13 +8,23 @@ import type { RootCause } from '@/lib/root-cause';
 
 type Props = {
   cause: RootCause;
+  /** How many weak topics were analysed — the denominator, so the card can say
+   *  "2 of your 3" instead of overclaiming. */
+  total: number;
 };
 
 /** One upstream concept, what it explains, and the sentence from the student's
  *  own notes that justifies it — so the claim is checkable, not asserted. */
-export function RootCauseCard({ cause }: Props) {
+export function RootCauseCard({ cause, total }: Props) {
   const colors = useTheme();
   const count = cause.explains.length;
+  // Only claim "all" when it genuinely covers every topic analysed.
+  const scope =
+    total === 1
+      ? 'your weak topic'
+      : count >= total
+        ? `all ${total} of your weak topics`
+        : `${count} of your ${total} weak topics`;
 
   return (
     <View
@@ -32,8 +42,7 @@ export function RootCauseCard({ cause }: Props) {
       </View>
 
       <Text style={[styles.explains, { color: colors.onSurfaceVariant }]}>
-        Sits underneath {count === 1 ? '' : 'all '}
-        {count} of your weak {count === 1 ? 'topic' : 'topics'} — {cause.explains.join(', ')}
+        Sits underneath {scope} — {cause.explains.join(', ')}
       </Text>
 
       {cause.evidence ? (

@@ -22,7 +22,7 @@ export default function WeakTopicsScreen() {
   const failing = topics.filter((t) => t.weak).length;
   // Root causes are derived from the failing topics only — the ones the latest
   // quiz actually flagged, not everything ever missed.
-  const { causes, loading } = useRootCauses(topics.filter((t) => t.weak).map((t) => t.label));
+  const { causes, loading, analyzed } = useRootCauses(topics.filter((t) => t.weak).map((t) => t.label));
 
   return (
     <View className="flex-1" style={{ backgroundColor: colors.surface }}>
@@ -53,7 +53,7 @@ export default function WeakTopicsScreen() {
                     </Text>
                   </View>
                   {causes.map((cause) => (
-                    <RootCauseCard key={cause.concept} cause={cause} />
+                    <RootCauseCard key={cause.concept} cause={cause} total={analyzed} />
                   ))}
                 </View>
               ) : null}

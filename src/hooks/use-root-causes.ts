@@ -14,10 +14,13 @@ const MAX_TOPICS = 4;
 type State = {
   causes: RootCause[];
   loading: boolean;
+  /** How many topics the analysis actually ran on — the denominator the
+   *  cards quote. Capped at MAX_TOPICS, so it can be fewer than were missed. */
+  analyzed: number;
 };
 
 export function useRootCauses(missedTopics: string[]): State {
-  const [state, setState] = useState<State>({ causes: [], loading: false });
+  const [state, setState] = useState<State>({ causes: [], loading: false, analyzed: 0 });
 
   // Re-run only when the actual topics change, not on every render.
   const key = missedTopics.slice(0, MAX_TOPICS).join('|');
@@ -28,14 +31,17 @@ export function useRootCauses(missedTopics: string[]): State {
     lastKey.current = key;
 
     const controller = new AbortController();
-    setState({ causes: [], loading: true });
+    const topics = key.split('|');
+    setState({ causes: [], loading: true, analyzed: topics.length });
 
-    findRootCauses(key.split('|'), controller.signal)
+    findRootCauses(topics, controller.signal)
       .then((causes) => {
-        if (!controller.signal.aborted) setState({ causes, loading: false });
+        if (!controller.signal.aborted)
+          setState({ causes, loading: false, analyzed: topics.length });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setState({ causes: [], loading: false });
+        if (!controller.signal.aborted)
+          setState({ causes: [], loading: false, analyzed: topics.length });
       });
 
     return () => controller.abort();
