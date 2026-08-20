@@ -23,7 +23,14 @@ export const DEFAULT_EMBED_MODEL = 'text-embedding-3-small';
 // --- Friendly errors --------------------------------------------------------
 // Every failure maps to a calm, student-facing sentence — never a raw trace.
 
-export type BtlErrorKind = 'not-configured' | 'network' | 'auth' | 'credits' | 'server' | 'unknown';
+export type BtlErrorKind =
+  | 'not-configured'
+  | 'network'
+  | 'auth'
+  | 'credits'
+  | 'server'
+  | 'too-large'
+  | 'unknown';
 
 const FRIENDLY: Record<BtlErrorKind, string> = {
   'not-configured': 'AI is not set up in this build yet.',
@@ -31,6 +38,7 @@ const FRIENDLY: Record<BtlErrorKind, string> = {
   auth: 'Your API key was rejected. Check your credentials.',
   credits: 'The study assistant is out of credits for now. Please try again later.',
   server: 'The study assistant is having a moment. Please try again shortly.',
+  'too-large': 'That recording is too long to transcribe. Try a shorter one.',
   unknown: 'Something went wrong reaching the study assistant. Please try again.',
 };
 

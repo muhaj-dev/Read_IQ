@@ -1,17 +1,17 @@
-// App preferences (AI chat model, …), persisted to AsyncStorage.
-// The chat model is read outside React by the lib callers via getChatModel().
+// App preferences (the AI model, …), persisted to AsyncStorage.
+// Read outside React by the lib callers via getChatModel().
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
 import { isKnownModel } from '@/data/ai-models';
-import { DEFAULT_CHAT_MODEL } from '@/lib/btl';
+import { DEFAULT_QUIZ_MODEL } from '@/lib/groq';
 
 const STORAGE_KEY = 'app_settings';
 
 type Settings = { chatModel: string };
 
-const DEFAULTS: Settings = { chatModel: DEFAULT_CHAT_MODEL };
+const DEFAULTS: Settings = { chatModel: DEFAULT_QUIZ_MODEL };
 
 async function persist(settings: Settings): Promise<void> {
   try {
@@ -26,7 +26,7 @@ type SettingsState = Settings & {
   loaded: boolean;
   /** Load persisted preferences once on app start. */
   init: () => Promise<void>;
-  /** Choose which BTL model answers (Ask, quiz, summary, podcast). */
+  /** Choose which Groq model writes the quiz questions. */
   setChatModel: (id: string) => Promise<void>;
 };
 

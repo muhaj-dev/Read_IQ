@@ -63,10 +63,26 @@ it and the root-cause feature does not degrade — it ceases to exist.
 | Quiz misses → memory lane | [`src/store/use-quiz-store.ts`](src/store/use-quiz-store.ts) |
 | Corpus ingest + status polling | [`scripts/hydra-ingest.mjs`](scripts/hydra-ingest.mjs) |
 
-**No LLM is used anywhere in this project.** HydraDB derives the entities,
-predicates and edges from the notes' prose on ingest, so there is no extraction
-step and no model API key. Answers are extractive — retrieved passages are shown
-verbatim with citations, which also means the app cannot hallucinate.
+**No LLM touches any of it.** HydraDB derives the entities, predicates and edges
+from the notes' prose on ingest, so there is no extraction step. Answers are
+extractive — retrieved passages are shown verbatim with citations, which also
+means Ask cannot hallucinate.
+
+A model is used in two places, and neither is this one. **Groq writes the quiz
+questions** ([`src/lib/quizgen.ts`](src/lib/quizgen.ts)) and **transcribes
+recordings** ([`src/lib/transcription.ts`](src/lib/transcription.ts)) — both
+through [`src/lib/groq.ts`](src/lib/groq.ts), the only module holding that key.
+
+Both are generation from the student's own material: four plausible options out
+of their notes, words out of their audio. Neither is retrieval, and neither is
+something the graph could have supplied. A transcript becomes a note, and only
+then does HydraDB see it, on ingest, like anything else the student saved.
+
+The boundary is enforced by imports: nothing on the retrieval, root-cause or
+memory path imports `groq.ts`, and `groq.ts` never queries HydraDB. What comes
+back from a quiz call is validated locally — option count, a single valid answer
+key, no duplicate options, and the cited note heading resolved back to a real
+note — and anything that fails is dropped rather than patched.
 
 ### The traversal
 
@@ -134,7 +150,15 @@ EXPO_PUBLIC_HYDRA_API_KEY=<your key>
 EXPO_PUBLIC_HYDRA_BASE_URL=https://api.hydradb.com
 EXPO_PUBLIC_HYDRA_DATABASE=readiq
 EXPO_PUBLIC_HYDRA_COLLECTION=readiq
+
+EXPO_PUBLIC_GROQ_API_KEY=<your key>          # quizzes + transcription only
+EXPO_PUBLIC_GROQ_BASE_URL=https://api.groq.com/openai/v1
 ```
+
+The Groq key is free from [console.groq.com/keys](https://console.groq.com/keys)
+and is only read by [`src/lib/groq.ts`](src/lib/groq.ts). Leave it blank and
+everything else still works — Quiz goes dark, and Record falls back to a manual,
+editable transcript.
 
 Create a database named `readiq` in the dashboard, then load the corpus:
 
@@ -158,6 +182,17 @@ node scripts/hydra-rootcause.mjs "calvin cycle" "krebs cycle" "atp synthesis"
 
 `hydra-rootcause.mjs` runs the same algorithm as the app screen, without needing
 a simulator.
+
+### Verifying quiz generation
+
+```bash
+node scripts/groq-quiz.mjs             # 5 questions from the Biology seed notes
+node scripts/groq-quiz.mjs 10 chem     # 10 from seed/chem-*.md
+```
+
+Same prompt and same validation as [`src/lib/quizgen.ts`](src/lib/quizgen.ts),
+so a failure here is a failure in the app. It prints how many questions survived
+validation, which is the number worth watching.
 
 ---
 
@@ -184,7 +219,9 @@ duplicating.
 
 ```
 Expo app ──HTTPS──> HydraDB Cloud
-   │                  (knowledge graph + memory)
+   │       │          (knowledge graph + memory)
+   │       └HTTPS──>  Groq
+   │                  (quiz questions + transcription, nothing else)
    └── SQLite         notes, quizzes, offline cache
 ```
 
@@ -192,21 +229,23 @@ There is no backend service. HydraDB Cloud is a single authenticated endpoint
 the app calls directly, and SQLite stays the local source of truth so the app
 still runs — falling back to lexical retrieval — when offline.
 
-Because there is no server, the API key ships in the app bundle via
+Because there is no server, both API keys ship in the app bundle via
 `EXPO_PUBLIC_`. That is acceptable for a hackathon demo; real use would put a
-thin proxy in front of it.
+thin proxy in front of them.
 
 ## Scope
 
 Built for the hackathon: graph retrieval, root-cause analysis, the memory lane,
-quiz→memory sync, and the existing UI throughout.
+quiz generation, quiz→memory sync, lecture transcription, and the existing UI
+throughout.
 
-Deliberately out of scope and still stubbed: OCR, audio transcription, and the
+Deliberately out of scope and still stubbed: OCR, PDF text extraction, and the
 study podcast ([`src/lib/ocr.ts`](src/lib/ocr.ts),
-[`src/lib/transcription.ts`](src/lib/transcription.ts),
-[`src/lib/podcast.ts`](src/lib/podcast.ts)). They require a media provider, touch
-HydraDB nowhere, and were cut to keep the graph work deep rather than the
-feature list wide.
+[`src/lib/pdf-extract.ts`](src/lib/pdf-extract.ts),
+[`src/lib/podcast.ts`](src/lib/podcast.ts)). They need a vision or speech-synthesis
+provider, touch HydraDB nowhere, and were cut to keep the graph work deep rather
+than the feature list wide. Each fails into a manual path rather than a dead end
+— Scan falls back to typing, Upload still unpacks `.docx` locally.
 
 ## Project structure
 
@@ -215,9 +254,10 @@ src/
   app/          Expo Router routes
   components/   UI, grouped by feature
   hooks/        use-root-causes, theme, dashboard selectors
-  lib/          hydra.ts · root-cause.ts · retrieval.ts · db.ts
+  lib/          hydra.ts · root-cause.ts · retrieval.ts · groq.ts · quizgen.ts ·
+                transcription.ts · db.ts
   store/        Zustand stores
-scripts/        hydra-ingest · hydra-probe · hydra-rootcause
+scripts/        hydra-ingest · hydra-probe · hydra-rootcause · groq-quiz
 seed/           13-note demo corpus
 ```
 

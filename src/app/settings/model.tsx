@@ -10,7 +10,7 @@ import { AI_MODELS } from '@/data/ai-models';
 import { useTheme } from '@/hooks/use-theme';
 import { useSettingsStore } from '@/store/use-settings-store';
 
-/** AI MODEL — pick which BTL model writes answers. Grounding is unaffected. */
+/** AI MODEL — pick which Groq model writes the quiz questions. Grounding is unaffected. */
 export default function ModelPickerScreen() {
   const colors = useTheme();
   const router = useRouter();
@@ -30,8 +30,8 @@ export default function ModelPickerScreen() {
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
           <Text style={[styles.blurb, { color: colors.onSurfaceVariant }]}>
-            Choose which model answers your questions. Every answer still comes only from your
-            saved notes — this just changes who writes it.
+            Choose which model writes your quiz questions. They still come only from your saved
+            notes — this just changes who writes them.
           </Text>
 
           {AI_MODELS.map((model) => (

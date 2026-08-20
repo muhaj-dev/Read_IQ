@@ -1,48 +1,42 @@
-// The AI chat models the student can pick in Settings → AI Model.
-// The id is sent verbatim as `model` in the request once a provider is wired up.
-// Grounding is unaffected by the choice — this only changes which model writes
-// the answer.
+// The models the student can pick in Settings → AI Model.
+//
+// These run on Groq, and they write quiz questions — that is the only job in
+// readIQ a model does. Ask, Weak Topics and Root Cause are HydraDB's graph work
+// and are unaffected by this choice; the questions stay grounded in the
+// student's own notes whichever model writes them.
+//
+// The id is sent verbatim as `model` in the Groq request. An id Groq no longer
+// serves falls back to the default rather than failing the quiz — see
+// `lib/groq.ts`.
 
-import { DEFAULT_CHAT_MODEL } from '@/lib/btl';
+import { DEFAULT_QUIZ_MODEL } from '@/lib/groq';
 
 export type AiModel = {
-  /** The BTL model slug sent in the request body. */
+  /** The Groq model slug sent in the request body. */
   id: string;
   /** Friendly name shown in the picker + the Settings row. */
   label: string;
-  /** Who's behind the model, on the gateway. */
+  /** Who trained the model, behind Groq. */
   provider: string;
   /** One calm line on what it's good for. */
   description: string;
-  /** btl-2 — the tested default. */
+  /** The tested default. */
   recommended?: boolean;
 };
 
 export const AI_MODELS: AiModel[] = [
   {
-    id: DEFAULT_CHAT_MODEL, // 'btl-2'
+    id: DEFAULT_QUIZ_MODEL, // 'openai/gpt-oss-120b'
     label: 'readIQ Default',
-    provider: 'Bad Theory Labs',
-    description: 'Fast, grounded, and tuned for study answers. The tested default.',
+    provider: 'OpenAI · GPT-OSS 120B',
+    description: 'Careful questions that stick to your notes. The tested default.',
     recommended: true,
   },
   {
-    id: 'gpt-4.1-mini',
-    label: 'GPT-4.1 mini',
-    provider: 'OpenAI',
-    description: 'Sharp reasoning for trickier questions about your notes.',
-  },
-  {
-    id: 'claude-haiku-4-5',
-    label: 'Claude Haiku 4.5',
-    provider: 'Anthropic',
-    description: 'Quick and careful — sticks closely to what your notes say.',
-  },
-  {
-    id: 'gemini-2.5-flash',
-    label: 'Gemini 2.5 Flash',
-    provider: 'Google',
-    description: 'Fast, with a large window for longer notes.',
+    id: 'openai/gpt-oss-20b',
+    label: 'Instant',
+    provider: 'OpenAI · GPT-OSS 20B',
+    description: 'The quickest quiz. Best for short, straightforward notes.',
   },
 ];
 

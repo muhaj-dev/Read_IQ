@@ -1,18 +1,23 @@
-// Lecture audio transcription — NOT IMPLEMENTED IN THIS BUILD.
+// Lecture audio transcription — Whisper on Groq.
 //
-// This repository is the UI layer only. Recording, the waveform, the timer and
-// the editable-transcript screen are all real; turning the audio into text needs
-// a speech-to-text provider, which this build has none of. The Record flow
-// already falls back to a manual, editable transcript when this is unavailable.
+// Two screens use this: the Record add-note flow (a whole lecture) and the Ask
+// composer's tap-to-dictate. Both already treat a throw as "let the student
+// type it in", so a failure here never blocks a note or a question.
+//
+// Like quiz generation, this is generation from the student's own material and
+// stays off HydraDB's path entirely — the transcript becomes a note, and only
+// then does the graph see it, on ingest, like any other note.
 
-import { BtlError } from './btl';
+import { groqTranscribe, isGroqConfigured } from './groq';
 
-/** Always false here — no speech-to-text credentials exist in the UI-only build. */
+/** False when no Groq key is configured — the Record flow goes straight to the
+ *  manual, editable transcript instead of failing at it. */
 export function isTranscriptionConfigured(): boolean {
-  return false;
+  return isGroqConfigured();
 }
 
-/** Not implemented — Record falls back to a manual, editable transcript. */
-export async function transcribeAudio(_uri: string): Promise<string> {
-  throw new BtlError('not-configured');
+/** Transcribe a local recording. Returns '' for silence — callers show their
+ *  "couldn't catch that" state rather than saving an empty note. */
+export async function transcribeAudio(uri: string, signal?: AbortSignal): Promise<string> {
+  return groqTranscribe(uri, { signal });
 }

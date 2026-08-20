@@ -11,6 +11,7 @@ import {
 } from 'expo-audio';
 import { useEffect, useRef, useState } from 'react';
 
+import { BtlError } from '@/lib/btl';
 import { transcribeAudio } from '@/lib/transcription';
 
 export type DictationStatus = 'idle' | 'recording' | 'transcribing';
@@ -81,7 +82,9 @@ export function useVoiceDictation({ onResult, onError }: Options) {
       if (text) cbs.current.onResult(text);
       else cbs.current.onError?.(NO_SPEECH);
     } catch (err) {
-      cbs.current.onError?.(err instanceof Error ? err.message : NO_SPEECH);
+      // BtlError carries student-facing copy; anything else gets the calm default
+      // rather than a raw message from the network layer.
+      cbs.current.onError?.(err instanceof BtlError ? err.friendly : NO_SPEECH);
     } finally {
       setStatus('idle');
     }

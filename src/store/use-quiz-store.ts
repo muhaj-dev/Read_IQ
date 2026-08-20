@@ -8,6 +8,7 @@ import { hydraRemember } from '@/lib/hydra';
 import { hashContent } from '@/lib/hash';
 import { generateQuiz, shuffleQuestionOptions } from '@/lib/quizgen';
 import { combineContent, DEFAULT_QUIZ_COUNT } from '@/lib/quiz-sources';
+import { getChatModel } from './use-settings-store';
 import type { GeneratedQuiz, MissedQuestion, QuizResult, QuizSource } from '@/types/quiz';
 
 function createId(): string {
@@ -146,8 +147,16 @@ export const useQuizStore = create<QuizState>((set, get) => ({
       // A re-attempt tells the generator which questions to steer away from.
       const avoid = fresh ? [...(seenBySource.get(source.id) ?? [])] : [];
       const questions = await generateQuiz(
-        { id: source.id, title: source.label, subject: source.label, content },
-        { count, avoid },
+        {
+          id: source.id,
+          title: source.label,
+          subject: source.label,
+          content,
+          // Passed so each question can cite the individual note it came from,
+          // not just the subject.
+          notes: source.notes.map((n) => ({ id: n.id, title: n.title })),
+        },
+        { count, avoid, model: getChatModel() },
       );
       if (questions.length === 0) {
         // Nothing new on a re-attempt ⇒ the note's questions are used up, not thin.
