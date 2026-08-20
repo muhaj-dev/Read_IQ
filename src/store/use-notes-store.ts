@@ -4,6 +4,7 @@ import { create } from 'zustand';
 
 import * as db from '@/lib/db';
 import { embedAndStoreNote, syncNoteEmbeddings } from '@/lib/embeddings';
+import { forgetNoteInGraph, syncNoteToGraph, syncNotesToGraph } from '@/lib/note-graph';
 import type { Note, NoteInput, NotePatch } from '@/types/note';
 
 function createId(): string {
@@ -39,6 +40,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       // Backfill retrieval vectors for notes saved before the semantic upgrade (or
       // saved offline) — lazy, guarded, and non-blocking so launch stays instant.
       void syncNoteEmbeddings(notes);
+      // Backfill the HydraDB knowledge lane too: only notes it has never seen (or
+      // has an older copy of) are uploaded, so this is a no-op after the first run.
+      void syncNotesToGraph(notes);
     } catch (err) {
       // Never crash the app over storage — start empty and let saves retry.
       console.warn('[notes] failed to load from SQLite', err);
@@ -73,6 +77,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     // Embed for semantic retrieval in the background — a snappy save; retrieval
     // covers this note lexically until its vector lands (usually ~1s).
     void embedAndStoreNote(note);
+    // Ingest into the HydraDB graph so Ask can reach this note by concept and not
+    // only by keyword. Fire-and-forget — the save must not wait on the network.
+    void syncNoteToGraph(note);
     return note;
   },
 
@@ -123,7 +130,11 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       next.title !== current.title ||
       next.subject !== current.subject ||
       next.content !== current.content;
-    if (searchableChanged) void embedAndStoreNote(next);
+    if (searchableChanged) {
+      void embedAndStoreNote(next);
+      // Ingest upserts on the note id, so this replaces the graph's older copy.
+      void syncNoteToGraph(next);
+    }
   },
 
   removeNote: async (id) => {
@@ -133,6 +144,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       console.warn('[notes] failed to delete note', err);
     }
     set((state) => ({ notes: state.notes.filter((n) => n.id !== id) }));
+    void forgetNoteInGraph(id);
   },
 
   getNote: (id) => get().notes.find((n) => n.id === id),

@@ -1,13 +1,16 @@
 // Retrieval — the gate behind "answers only from your notes".
 //
-// Two paths behind one signature. The primary path is GRAPH retrieval: HydraDB
-// holds a concept graph built from the notes, so a question pulls in chunks that
-// are *connected* to it, not only ones that repeat its words — that is what lets
-// Ask reach a prerequisite the question never named.
+// Two paths behind one signature, and both of them run. GRAPH retrieval asks
+// HydraDB, which holds a concept graph built from the ingested notes, so a
+// question pulls in chunks that are *connected* to it and not only ones that
+// repeat its words — that is what lets Ask reach a prerequisite the question
+// never named.
 //
-// The fallback is LEXICAL retrieval (IDF-weighted keyword overlap), fully local
-// and offline. It runs when HydraDB is unconfigured or unreachable, so the app
-// degrades instead of failing.
+// LEXICAL retrieval (IDF-weighted keyword overlap) is fully local and offline,
+// and it is the only path that can see every note on the device — including one
+// saved while offline, or saved seconds ago while its ingest is still landing.
+// So it is not a fallback for when the graph is down; it runs every time and its
+// hits are merged with the graph's.
 //
 // Either way an empty result is the honest "not in your notes", which is what
 // stops Ask from answering ungrounded.
@@ -129,21 +132,56 @@ export function lexicalTopK(query: string, notes: Note[], k = 4): RetrievalHit[]
   return ranked.filter((hit) => hit.score >= cutoff).slice(0, k);
 }
 
+/** Comparable form for spotting the same passage arriving down both paths. */
+function passageKey(hit: RetrievalHit): string {
+  return `${hit.noteId}|${hit.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 120)}`;
+}
+
+/** Interleave graph hits with local ones, best-first within each, dropping repeats.
+ *
+ *  Interleaved rather than score-sorted because the two scores are not the same
+ *  measurement — HydraDB's relevancy and the local overlap score share no scale,
+ *  so ranking them against each other would be arithmetic on incomparable units.
+ *  Alternating gives each path a guaranteed share of the K slots, which is the
+ *  property that actually matters: whatever the graph returns, the student's own
+ *  notes always get looked at. */
+function mergeHits(graph: RetrievalHit[], local: RetrievalHit[], k: number): RetrievalHit[] {
+  const merged: RetrievalHit[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < Math.max(graph.length, local.length) && merged.length < k; i += 1) {
+    for (const hit of [graph[i], local[i]]) {
+      if (!hit || merged.length >= k) continue;
+      const key = passageKey(hit);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(hit);
+    }
+  }
+  return merged;
+}
+
 /** Top-K note chunks for a question, best-first. Returns `[]` when nothing clears the
  *  grounding gate — the caller shows the honest fallback.
  *
- *  Tries the HydraDB graph first and falls back to local keyword matching. Callers
- *  see one signature and never need to know which path answered. */
+ *  Both paths run and their results are merged. The graph reaches concepts the
+ *  question never named; the local scorer is the only path that can see a note
+ *  that hasn't reached HydraDB yet — one saved offline, or saved before its
+ *  ingest landed. Preferring the graph outright, as this used to, meant that
+ *  whenever the collection held anything at all it answered every question with
+ *  its own chunks and the student's own notes were never read; chunks that had
+ *  nothing to say about the question then yielded no quotable sentence, and Ask
+ *  declined with "I don't have that in your notes" while the note sat on disk. */
 export async function retrieveTopK(query: string, k = 4): Promise<RetrievalHit[]> {
   const q = query.trim();
   if (!q) return [];
 
   const { notes } = useNotesStore.getState();
 
-  // Graph-native path: HydraDB walks the concept graph and returns the chunks
-  // around the question, not just the ones that share its words. Falls through
-  // to the local lexical scorer when unconfigured or unreachable, so the app
-  // still answers offline.
+  // Local first, and unconditionally — it is synchronous, offline, and the only
+  // path that is guaranteed to know about every note the student has saved.
+  const local = notes.length > 0 ? lexicalTopK(q, notes, k) : [];
+
+  let graph: RetrievalHit[] = [];
   if (isHydraConfigured()) {
     try {
       // "knowledge" only, deliberately. The default is "all", which mixes the
@@ -153,17 +191,14 @@ export async function retrieveTopK(query: string, k = 4): Promise<RetrievalHit[]
       // note heading, so a memory reaching here is shown to the student as a
       // sentence they wrote. Memory is read on its own terms in lib/memory.ts.
       const { chunks } = await hydraQuery(q, { maxResults: k, type: 'knowledge' });
-      const hits = chunks
-        .filter((c) => c.sourceType !== 'memory')
-        .map((c) => toHit(c, notes));
-      if (hits.length > 0) return hits.slice(0, k);
+      graph = chunks.filter((c) => c.sourceType !== 'memory').map((c) => toHit(c, notes));
     } catch {
-      // Fall back rather than surface a network error as "not in your notes".
+      // Answer from the local hits rather than surface a network error as
+      // "not in your notes".
     }
   }
 
-  if (notes.length === 0) return [];
-  return lexicalTopK(q, notes, k);
+  return mergeHits(graph, local, k);
 }
 
 /** Resolve a HydraDB chunk back to a local note so citations stay tappable.

@@ -7,6 +7,9 @@
 //
 // This is the only module that should hold the base URL or the API key.
 
+import { File as FsFile, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
+
 /** A node in the derived graph. `entityId` is stable across documents. */
 export type HydraEntity = {
   entityId: string;
@@ -151,6 +154,78 @@ export async function hydraRemember(
 
   const res = await fetch(`${BASE_URL}/context/ingest`, {
     method: 'POST',
+    headers: { Authorization: `Bearer ${API_KEY}`, 'API-Version': '2' },
+    body: form,
+    signal,
+  });
+  return res.ok;
+}
+
+/** A saved note on its way into the knowledge lane.
+ *
+ *  `id` is the ReadIQ note id on purpose: HydraDB echoes it back as a chunk's
+ *  source id, which is what lets a citation resolve to the local note and stay
+ *  tappable. Re-sending the same id upserts, so an edited note replaces its
+ *  earlier copy instead of ending up in the graph twice. */
+export type HydraDocument = {
+  id: string;
+  title: string;
+  /** Plain text to index — for a note, its searchable projection. */
+  text: string;
+};
+
+/** Filename for the uploaded part. HydraDB reads the source title off it, so it
+ *  is the note's title rather than its id — the id travels in the metadata. */
+function documentName(doc: HydraDocument): string {
+  const safe = doc.title.replace(/[^\w .-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return `${safe || doc.id}.md`;
+}
+
+/** Attach one document. React Native uploads by file URI, so the text is written
+ *  to a cache file first; web has no such file layer and takes a real Blob. */
+async function appendDocument(form: FormData, doc: HydraDocument): Promise<void> {
+  const name = documentName(doc);
+  // No markdown title header: HydraDB reads the source title off the filename,
+  // and a note's searchable text already leads with its title and subject —
+  // prepending one again puts the title in the chunk body twice, where it can
+  // end up inside a quoted passage.
+  const body = doc.text;
+
+  if (Platform.OS === 'web') {
+    form.append('documents', new Blob([body], { type: 'text/markdown' }), name);
+    return;
+  }
+
+  const file = new FsFile(Paths.cache, `hydra-${doc.id}.md`);
+  if (file.exists) file.delete();
+  file.create();
+  file.write(body);
+  // RN's FormData takes {uri, name, type}; the DOM typings don't describe it.
+  form.append('documents', { uri: file.uri, name, type: 'text/markdown' } as unknown as Blob);
+}
+
+/** Push notes into the student's Knowledge lane so the graph can actually reach
+ *  them. Without this the collection only holds whatever a script seeded, and
+ *  every question about a note written on-device misses.
+ *
+ *  Returns false when unconfigured — the caller carries on, since local keyword
+ *  retrieval still covers the note. */
+export async function hydraIngestDocuments(
+  docs: HydraDocument[],
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!isHydraConfigured() || docs.length === 0) return false;
+
+  const form = new FormData();
+  form.append('type', 'knowledge');
+  form.append('database', DATABASE);
+  form.append('collection', COLLECTION);
+  for (const doc of docs) await appendDocument(form, doc);
+  form.append('document_metadata', JSON.stringify(docs.map((d) => ({ id: d.id }))));
+
+  const res = await fetch(`${BASE_URL}/context/ingest`, {
+    method: 'POST',
+    // No Content-Type — the runtime sets the multipart boundary itself.
     headers: { Authorization: `Bearer ${API_KEY}`, 'API-Version': '2' },
     body: form,
     signal,

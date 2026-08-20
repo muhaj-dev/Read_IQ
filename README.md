@@ -30,6 +30,12 @@ concept graph rather than by keyword. A question about the Calvin cycle can pull
 in the electron transport chain because the notes say one depends on the other,
 even though the question never named it.
 
+Every note saved in the app is ingested into the knowledge lane, so the graph is
+built from what the student actually wrote and not only from the seed corpus.
+Ingestion is asynchronous, so local keyword retrieval runs alongside the graph on
+every question rather than behind it — that is what covers a note saved seconds
+ago, or saved offline (finding #5).
+
 **Weak Topics → Root Cause** — the centrepiece. Given the topics a quiz flagged,
 readIQ walks prerequisite edges backwards and reports what they share:
 
@@ -74,7 +80,8 @@ it and the root-cause feature does not degrade — it ceases to exist.
 | Memory recall + superseding rule | [`src/lib/memory.ts`](src/lib/memory.ts) |
 | Quiz misses → memory lane | [`src/store/use-quiz-store.ts`](src/store/use-quiz-store.ts) |
 | Deadlines → memory lane | [`src/store/use-deadlines-store.ts`](src/store/use-deadlines-store.ts) |
-| Corpus ingest + status polling | [`scripts/hydra-ingest.mjs`](scripts/hydra-ingest.mjs) |
+| Notes saved in-app → knowledge lane | [`src/lib/note-graph.ts`](src/lib/note-graph.ts) |
+| Seed corpus ingest + status polling | [`scripts/hydra-ingest.mjs`](scripts/hydra-ingest.mjs) |
 | Live connection status in Settings | [`src/app/settings/index.tsx`](src/app/settings/index.tsx) |
 
 **No LLM touches any of it.** HydraDB derives the entities, predicates and edges
@@ -157,7 +164,7 @@ Root-cause analysis ([`src/lib/root-cause.ts`](src/lib/root-cause.ts)):
 
 ---
 
-## Four findings worth recording
+## Five findings worth recording
 
 All four were discovered against the live API, and all four changed the
 implementation.
@@ -230,6 +237,38 @@ too *small*: these models reason before they answer, and that spend comes out of
 the same budget, so a one-sentence summary capped at 120 tokens returns a 400
 (`max completion tokens reached before generating a valid document`) rather than
 a short summary.
+
+**5. A non-empty result set is not evidence of a match.** Retrieval treated the
+graph as authoritative whenever it returned anything, and fell back to local
+keyword search only when HydraDB was unconfigured or unreachable. HydraDB is
+neither — and it answers *every* query. Asked `who won the 1998 world cup final`,
+a collection holding nothing but biology and chemistry notes returned three
+chunks, top score 0.211:
+
+```
+bio-electron-transport-chain  0.211
+bio-proton-gradient-atp       0.205
+bio-glycolysis                0.195
+```
+
+Relevancy is a ranking *within* a response, not a claim that anything matched —
+the same property that finding #3 turned up in the scores themselves. So the
+graph path always won, the student's own notes were never read, and the chunks
+that came back had nothing to say about the question — leaving no quotable
+sentence and an answer of *"I don't have that in your notes yet"* while the note
+sat on disk.
+
+Two things follow, and both are now the implementation. **Local retrieval is not
+a fallback**: it runs on every question and its hits are merged with the graph's,
+because it is the only path that can see a note saved offline, or saved in the
+seconds before its ingest lands. And the two rankings are **interleaved rather
+than re-sorted together** — merging them by score would be arithmetic on
+incomparable units. Alternating guarantees each path a share of the K slots,
+which is the property that actually matters.
+
+The general shape is worth carrying to any retrieval layer: *scored* and
+*relevant* are different questions, and an API that always answers the first one
+will never answer the second on your behalf.
 
 ---
 
