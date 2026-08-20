@@ -10,7 +10,8 @@ import { AI_MODELS } from '@/data/ai-models';
 import { useTheme } from '@/hooks/use-theme';
 import { useSettingsStore } from '@/store/use-settings-store';
 
-/** AI MODEL — pick which Groq model writes the quiz questions. Grounding is unaffected. */
+/** AI MODEL — pick which Groq model writes the quiz questions and the opt-in
+ *  beyond-notes answer. Grounded Ask is extractive and unaffected either way. */
 export default function ModelPickerScreen() {
   const colors = useTheme();
   const router = useRouter();
@@ -30,8 +31,9 @@ export default function ModelPickerScreen() {
 
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
           <Text style={[styles.blurb, { color: colors.onSurfaceVariant }]}>
-            Choose which model writes your quiz questions. They still come only from your saved
-            notes — this just changes who writes them.
+            Choose which model writes your quiz questions, and the answers you ask for from
+            outside your notes. Questions still come only from what you saved — this just
+            changes who writes them.
           </Text>
 
           {AI_MODELS.map((model) => (

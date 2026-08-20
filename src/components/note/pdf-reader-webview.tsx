@@ -7,12 +7,8 @@ import type { PdfOpenComment } from '@/data/pdf-annotations';
 import { useTheme } from '@/hooks/use-theme';
 import { withAlpha } from '@/lib/color';
 import { buildPdfReaderDocument } from '@/lib/pdf-reader-doc';
+import { PDFJS_URL, PDFJS_WORKER_URL } from '@/lib/pdfjs';
 import type { PdfAnnotations } from '@/types/note';
-
-// pdf.js UMD build, pinned (exposes window.pdfjsLib + renderTextLayer). The PDF
-// itself never leaves the device — only this viewer library loads from the CDN.
-const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 /** Imperative comment actions the reader view drives from the modal. */
 export type PdfReaderWebViewHandle = {

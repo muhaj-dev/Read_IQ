@@ -4,6 +4,7 @@ import { create } from 'zustand';
 
 import * as db from '@/lib/db';
 import { byDueDate } from '@/lib/deadline-view';
+import { hydraRemember } from '@/lib/hydra';
 import type { Deadline, DeadlineInput } from '@/types/deadline';
 
 function createId(): string {
@@ -57,6 +58,7 @@ export const useDeadlinesStore = create<DeadlinesState>((set, get) => ({
     }
     // Optimistic + keep the list sorted soonest-due first.
     set((state) => ({ deadlines: [...state.deadlines, deadline].sort(byDueDate) }));
+    void rememberDeadline(deadline);
     return deadline;
   },
 
@@ -83,3 +85,33 @@ export const useDeadlinesStore = create<DeadlinesState>((set, get) => ({
     }));
   },
 }));
+
+/** Record a saved deadline as a memory — a dated fact the app now knows.
+ *
+ *  This is the half of the memory lane that isn't about performance. A note
+ *  written weeks ago says the quiz is on the 22nd; saving a deadline for the
+ *  24th is the student telling the app otherwise, and because the memory is
+ *  written now it is newer than the note. Ask surfaces both and lets the newer
+ *  one win (lib/memory.ts) rather than leaving the stale date unchallenged.
+ *
+ *  Keyed on the deadline id, so re-saving updates rather than accumulating.
+ *  Silent on failure by design: SQLite is the source of truth, this is context. */
+async function rememberDeadline(deadline: Deadline): Promise<void> {
+  const due = deadline.dueDate.slice(0, 10);
+  const subject = deadline.subject ? ` for ${deadline.subject}` : '';
+
+  try {
+    await hydraRemember([
+      {
+        id: `deadline-${deadline.id}`,
+        title: deadline.title,
+        text:
+          `The student has a ${deadline.type.toLowerCase()}${subject}, ` +
+          `"${deadline.title}", due on ${due}. ` +
+          `This is the date they saved, and it supersedes any earlier date in their notes.`,
+      },
+    ]);
+  } catch (err) {
+    console.warn('[deadlines] failed to sync deadline to HydraDB', err);
+  }
+}

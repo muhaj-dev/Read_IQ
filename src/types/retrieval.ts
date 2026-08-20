@@ -26,4 +26,7 @@ export type StoredChunk = {
 export type RetrievalHit = NoteChunk & {
   /** Relevance in [0, 1]: cosine similarity (semantic) or keyword overlap (lexical fallback). */
   score: number;
+  /** ISO time the note was last written, when retrieval knew it. Used to decide
+   *  whether a memory is newer than the note it disagrees with. */
+  updatedAt?: string;
 };

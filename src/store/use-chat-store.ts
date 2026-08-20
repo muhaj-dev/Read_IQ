@@ -3,14 +3,9 @@
 import { create } from 'zustand';
 
 import { buildImageNoteInput, inferTopic } from '@/lib/ask-image';
+import { answerBeyondNotes, answerImageGrounded, answerImageOpen } from '@/lib/beyond';
 import { BtlError } from '@/lib/btl';
-import {
-  answerBeyondNotes,
-  answerImageGrounded,
-  answerImageOpen,
-  askFromNotes,
-  continueAnswer,
-} from '@/lib/chat';
+import { askFromNotes, continueAnswer } from '@/lib/chat';
 import {
   deleteChatSession,
   insertChatMessage,

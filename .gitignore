@@ -44,3 +44,7 @@ example
 # generated native folders
 /ios
 /android
+
+# fixtures the verification scripts generate on each run
+.pdf-extract-fixture.pdf
+.ocr-fixture.png

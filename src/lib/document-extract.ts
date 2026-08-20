@@ -1,6 +1,7 @@
 // Upload-flow text extraction: routes each picked document to the right reader —
-// .docx is unpacked locally, PDF needs an AI provider (not implemented in this
-// build) — and joins the results in pick order. The Upload screen calls this one
+// .docx is unzipped locally, a PDF is read by pdf.js in a hidden WebView — and
+// joins the results in pick order. Neither path calls an AI provider, so an
+// upload costs nothing and works offline. The Upload screen calls this one
 // function.
 
 import type { NoteAttachment } from '@/types/note';

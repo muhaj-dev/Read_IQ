@@ -12,15 +12,17 @@
 // entirely — every line on screen exists in a note the student saved, and the
 // citation tag opens it.
 //
-// What still needs a model is generation from outside the notes: answering beyond
-// them, and reading an attached photo. Those stay unimplemented here.
+// What needs a model is generation from outside the notes — answering beyond them,
+// and reading an attached photo. That lives in lib/beyond.ts, and this file never
+// imports it, so the extractive path here cannot reach a model even by accident.
 
 import { useNotesStore } from '@/store/use-notes-store';
 import type { Citation } from '@/types/chat';
 import type { RetrievalHit } from '@/types/retrieval';
 
-import { BtlError } from './btl';
+import { recallMemories, supersedingMemories, type MemoryHit } from './memory';
 import { retrieveTopK, tokenize } from './retrieval';
+import { reveal } from './reveal';
 
 /** The decline sentence — used identically as prompt instruction, fallback, and detector. */
 export const NOT_IN_NOTES = "I don't have that in your notes yet.";
@@ -37,6 +39,9 @@ const CONTINUE_K = 16;
 const MAX_PASSAGES = 3;
 /** Roughly a screenful. Passing it is what makes an answer "truncated". */
 const ANSWER_CHARS = 900;
+/** Heads the memory aside. A whole-line label renders as a section heading
+ *  (answer-blocks.ts), which is what keeps it visibly outside the quote. */
+const MEMORY_HEADING = '**Since you saved that:**';
 /** A quote shorter than this is a fragment, not an answer. */
 const MIN_PASSAGE_CHARS = 40;
 /** Below this a "sentence" is almost always a chunk boundary's leftover. */
@@ -183,6 +188,17 @@ function render(passages: Passage[]): string {
   return passages.map((p) => `**${p.noteTitle}**\n${p.text}`).join('\n\n');
 }
 
+/** The memory aside, rendered below the quoted notes.
+ *
+ *  Below, not merged. The note said the quiz was on the 22nd and the student is
+ *  entitled to see that they wrote that. What the app observed afterwards goes
+ *  underneath, in its own labelled section, so the newer claim wins the reader's
+ *  eye without the older one being quietly rewritten out from under them. */
+function renderMemories(memories: MemoryHit[]): string {
+  const lane = memories.map((m) => `**${m.title}**\n${m.text}`).join('\n\n');
+  return `${MEMORY_HEADING}\n\n${lane}`;
+}
+
 /** One tag per source note, in the order they were quoted. */
 function toCitations(passages: Passage[]): Citation[] {
   const seen = new Set<string>();
@@ -197,26 +213,6 @@ function toCitations(passages: Passage[]): Citation[] {
     });
   }
   return citations;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Reveal the answer a few words at a time. Nothing is being waited on — the text
- *  is already in hand — but an answer that lands whole reads as a canned string,
- *  and the bubble's typing state is driven by deltas. Aborting stops the reveal;
- *  the caller still receives the finished text. */
-async function reveal(
-  text: string,
-  onToken?: (delta: string) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (!onToken) return;
-  const parts = text.match(/\S+\s*/g) ?? [];
-  for (let i = 0; i < parts.length; i += 4) {
-    if (signal?.aborted) return;
-    onToken(parts.slice(i, i + 4).join(''));
-    await sleep(16);
-  }
 }
 
 // --- The public surface ------------------------------------------------------
@@ -249,7 +245,13 @@ export async function askFromNotes(
     return { grounded: false, content: NOT_IN_NOTES, citations: [], truncated: false };
   }
 
-  const content = render(passages);
+  // Only what the app learned *after* the quoted notes were written. An older
+  // memory has already been answered by the note itself, and appending it would
+  // contradict the student with something they have since superseded.
+  const memories = supersedingMemories(await recallMemories(question, opts.signal), hits);
+
+  const answer = render(passages);
+  const content = memories.length ? `${answer}\n\n${renderMemories(memories)}` : answer;
   await reveal(content, opts.onToken, opts.signal);
 
   return {
@@ -294,38 +296,4 @@ export async function continueAnswer(
     truncated: more,
     exhausted: false,
   };
-}
-
-// --- Still unimplemented: generation from outside the notes ------------------
-// These are not retrieval, so nothing here can supply them. Each throws, and the
-// Ask screen renders its calm not-set-up state rather than a dead end.
-
-export type BeyondResult = { content: string; truncated: boolean };
-
-/** Not implemented — a general-knowledge answer needs a model. */
-export async function answerBeyondNotes(
-  _question: string,
-  _opts: { onToken?: (delta: string) => void; signal?: AbortSignal } = {},
-): Promise<BeyondResult> {
-  throw new BtlError('not-configured');
-}
-
-export type ImageAskResult = AskResult & { fromImage: true };
-
-/** Not implemented — reading an attached photo needs a vision provider (see lib/ocr.ts). */
-export async function answerImageGrounded(
-  _question: string,
-  _imageText: string,
-  _opts: { onToken?: (delta: string) => void; signal?: AbortSignal } = {},
-): Promise<ImageAskResult | null> {
-  throw new BtlError('not-configured');
-}
-
-/** Not implemented — see {@link answerImageGrounded}. */
-export async function answerImageOpen(
-  _question: string,
-  _imageText: string,
-  _opts: { onToken?: (delta: string) => void; signal?: AbortSignal } = {},
-): Promise<BeyondResult> {
-  throw new BtlError('not-configured');
 }

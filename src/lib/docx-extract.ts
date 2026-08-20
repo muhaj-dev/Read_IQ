@@ -1,7 +1,7 @@
 // .docx → text, entirely on-device. A .docx is a zip; the visible text lives in
 // `word/document.xml` (body) plus separate parts for headers, footers, footnotes and
 // endnotes. We unzip with jszip and convert each part's <w:t> runs to plain text —
-// no BTL call, so it costs no runtime credits (unlike PDF extraction).
+// no AI call — the same as PDF extraction, which reads the file’s own text layer.
 
 import JSZip from 'jszip';
 

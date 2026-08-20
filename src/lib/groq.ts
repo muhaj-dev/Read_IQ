@@ -1,15 +1,19 @@
 // Groq client — the ONLY module in the app that holds a Groq key or base URL.
 //
-// Scope is deliberate and narrow. Groq does two jobs: it writes quiz questions,
-// and it turns a recording into text. Ask, Weak Topics, Root Cause and Memory
-// are HydraDB's work and stay LLM-free — retrieval is graph traversal and
-// answers are extractive, so nothing on that path may import this file.
+// Scope is deliberate and narrow. Groq does six jobs, and every one of them is
+// *generation*, never retrieval: MCQs out of the notes (`quizgen.ts`), words out
+// of a recording (`transcription.ts`), the words off a photographed page
+// (`ocr.ts`), a two-host episode script (`podcast.ts`), a one-line gist of a long
+// extraction (`summarize.ts`), and the opt-in general-knowledge answer the
+// student has to ask for by name (`beyond.ts`).
 //
-// Both jobs are *generation from the student's own material*, never retrieval:
-// MCQs from their notes, words from their audio. Neither has an opinion the
-// graph could have supplied instead.
+// Grounded Ask, Weak Topics, Root Cause and Memory are HydraDB's work and stay
+// LLM-free — retrieval is graph traversal and answers are extractive, so nothing
+// on that path may import this file. `chat.ts`, `retrieval.ts`, `root-cause.ts`
+// and `memory.ts` therefore have no line reaching here, directly or otherwise.
 //
-// OpenAI-compatible endpoints: chat completions (JSON mode) and transcriptions.
+// OpenAI-compatible endpoints: chat completions (JSON, text, vision) and
+// transcriptions. PDF text extraction is NOT here — it needs no model at all.
 
 import { File as FsFile } from 'expo-file-system';
 
@@ -23,6 +27,10 @@ export const DEFAULT_QUIZ_MODEL = 'openai/gpt-oss-120b';
 
 /** Speech-to-text. Not student-selectable — the picker is about quiz style. */
 export const TRANSCRIBE_MODEL = 'whisper-large-v3';
+
+/** The one multimodal model Groq serves us, used for Scan OCR. Not
+ *  student-selectable either: there is nothing to choose between. */
+export const VISION_MODEL = 'qwen/qwen3.6-27b';
 
 /** False when no key is configured — callers surface the friendly not-set-up state. */
 export function isGroqConfigured(): boolean {
@@ -54,7 +62,12 @@ function isUnknownModel(status: number, body: string): boolean {
   return status === 404 && /model_not_found|does not exist/i.test(body);
 }
 
-async function post(messages: ChatMessage[], model: string, opts: GroqChatOptions) {
+async function post(
+  messages: ChatMessage[],
+  model: string,
+  opts: GroqChatOptions,
+  json: boolean,
+) {
   return fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -66,31 +79,31 @@ async function post(messages: ChatMessage[], model: string, opts: GroqChatOption
       messages,
       temperature: opts.temperature ?? 0.3,
       max_tokens: opts.maxTokens ?? 4096,
-      response_format: { type: 'json_object' },
+      ...(json ? { response_format: { type: 'json_object' } } : {}),
     }),
     signal: opts.signal,
   });
 }
 
-/** One JSON-mode completion. Returns the parsed object, or throws BtlError.
- *
- *  JSON mode is not a guarantee of *shape*, only of syntax — every caller must
- *  still validate what it gets back. */
-export async function groqChatJson<T = unknown>(
+/** One completion, with the unknown-model retry. Returns the raw choice so each
+ *  caller can decide what "a good answer" means — parsed JSON, or prose plus
+ *  whether the model was cut off mid-sentence. */
+async function complete(
   messages: ChatMessage[],
-  opts: GroqChatOptions = {},
-): Promise<T> {
+  opts: GroqChatOptions,
+  json: boolean,
+): Promise<{ content: string; finishReason: string | null }> {
   if (!isGroqConfigured()) throw new BtlError('not-configured');
 
   const wanted = opts.model?.trim() || DEFAULT_QUIZ_MODEL;
 
   let res: Response;
   try {
-    res = await post(messages, wanted, opts);
+    res = await post(messages, wanted, opts, json);
     if (!res.ok && wanted !== DEFAULT_QUIZ_MODEL) {
       const body = await res.text();
       if (!isUnknownModel(res.status, body)) throw toBtlError(res.status, body);
-      res = await post(messages, DEFAULT_QUIZ_MODEL, opts);
+      res = await post(messages, DEFAULT_QUIZ_MODEL, opts, json);
     }
   } catch (err) {
     if (err instanceof BtlError) throw err;
@@ -101,17 +114,119 @@ export async function groqChatJson<T = unknown>(
 
   if (!res.ok) throw toBtlError(res.status, await res.text());
 
-  const json = (await res.json()) as { choices?: { message?: { content?: unknown } }[] };
-  const content = json.choices?.[0]?.message?.content;
+  const body = (await res.json()) as {
+    choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
+  };
+  const choice = body.choices?.[0];
+  const content = choice?.message?.content;
   if (typeof content !== 'string' || content.trim() === '') {
     throw new BtlError('server', 'Groq returned an empty completion');
   }
 
+  return {
+    content,
+    finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+  };
+}
+
+/** One JSON-mode completion. Returns the parsed object, or throws BtlError.
+ *
+ *  JSON mode is not a guarantee of *shape*, only of syntax — every caller must
+ *  still validate what it gets back. */
+export async function groqChatJson<T = unknown>(
+  messages: ChatMessage[],
+  opts: GroqChatOptions = {},
+): Promise<T> {
+  const { content } = await complete(messages, opts, true);
   try {
     return JSON.parse(stripFence(content)) as T;
   } catch {
     throw new BtlError('server', 'Groq returned malformed JSON');
   }
+}
+
+/** Prose out, no JSON mode. `truncated` is Groq saying it hit the token ceiling
+ *  mid-answer rather than finishing — the caller shows that honestly instead of
+ *  letting a sentence stop halfway with no explanation. */
+export type GroqTextResult = { text: string; truncated: boolean };
+
+/** One plain-text completion. Throws BtlError exactly like {@link groqChatJson}. */
+export async function groqChatText(
+  messages: ChatMessage[],
+  opts: GroqChatOptions = {},
+): Promise<GroqTextResult> {
+  const { content, finishReason } = await complete(messages, opts, false);
+  return { text: content.trim(), truncated: finishReason === 'length' };
+}
+
+// --- Vision ------------------------------------------------------------------
+
+/** Reasoning models on Groq emit their working in a <think> block ahead of the
+ *  answer, and the vision model does it on every call. Left in, a transcription
+ *  would open with the model talking to itself about the photograph. An unclosed
+ *  block means the answer never arrived — treated as empty, not salvaged. */
+function stripThinking(text: string): string {
+  if (!text.includes('<think>')) return text.trim();
+  const closed = text.lastIndexOf('</think>');
+  return closed === -1 ? '' : text.slice(closed + '</think>'.length).trim();
+}
+
+/** One image + one instruction, prose out.
+ *
+ *  Kept apart from {@link groqChatText} because the message shape differs — the
+ *  content is an array of parts, not a string — and because the unknown-model
+ *  retry must NOT apply: falling back to the text default on a vision call would
+ *  quietly answer without ever having looked at the image. */
+export async function groqVisionText(
+  instruction: string,
+  imageDataUri: string,
+  opts: GroqChatOptions = {},
+): Promise<string> {
+  if (!isGroqConfigured()) throw new BtlError('not-configured');
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: opts.model?.trim() || VISION_MODEL,
+        temperature: opts.temperature ?? 0,
+        max_tokens: opts.maxTokens ?? 4096,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: instruction },
+              { type: 'image_url', image_url: { url: imageDataUri } },
+            ],
+          },
+        ],
+      }),
+      signal: opts.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
+    throw new BtlError('network', err instanceof Error ? err.message : String(err));
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    // The vision endpoint rejects an image it cannot decode — a corrupt capture
+    // or a file that is not really an image. That is the photo's problem, not
+    // the student's credentials, so it must not read as an auth failure.
+    if (res.status === 400 && /image/i.test(body)) {
+      throw new BtlError('unknown', 'that image could not be read');
+    }
+    throw toBtlError(res.status, body);
+  }
+
+  const json = (await res.json()) as { choices?: { message?: { content?: unknown } }[] };
+  const content = json.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? stripThinking(content) : '';
 }
 
 /** Some models still wrap JSON in a ```json fence despite JSON mode. */

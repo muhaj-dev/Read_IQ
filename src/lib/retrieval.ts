@@ -146,8 +146,16 @@ export async function retrieveTopK(query: string, k = 4): Promise<RetrievalHit[]
   // still answers offline.
   if (isHydraConfigured()) {
     try {
-      const { chunks } = await hydraQuery(q, { maxResults: k });
-      const hits = chunks.map((c) => toHit(c, notes));
+      // "knowledge" only, deliberately. The default is "all", which mixes the
+      // memory lane in — and memories outrank notes on exactly the questions
+      // they were written about ("krebs cycle" surfaces the missed-question
+      // memory above every note on it). Ask quotes what it retrieves under a
+      // note heading, so a memory reaching here is shown to the student as a
+      // sentence they wrote. Memory is read on its own terms in lib/memory.ts.
+      const { chunks } = await hydraQuery(q, { maxResults: k, type: 'knowledge' });
+      const hits = chunks
+        .filter((c) => c.sourceType !== 'memory')
+        .map((c) => toHit(c, notes));
       if (hits.length > 0) return hits.slice(0, k);
     } catch {
       // Fall back rather than surface a network error as "not in your notes".
@@ -171,5 +179,6 @@ function toHit(chunk: HydraChunk, notes: Note[]): RetrievalHit {
     noteTitle: local?.title ?? chunk.title,
     text: chunk.text,
     score: chunk.score,
+    updatedAt: chunk.updatedAt || local?.createdAt,
   };
 }

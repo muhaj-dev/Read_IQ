@@ -1,9 +1,10 @@
 // The models the student can pick in Settings → AI Model.
 //
-// These run on Groq, and they write quiz questions — that is the only job in
-// readIQ a model does. Ask, Weak Topics and Root Cause are HydraDB's graph work
-// and are unaffected by this choice; the questions stay grounded in the
-// student's own notes whichever model writes them.
+// These run on Groq. The picked model writes the quiz questions and the opt-in
+// "answer from outside your notes" reply — the two places the student’s choice is
+// felt. Grounded Ask, Weak Topics and Root Cause are HydraDB's graph work and are
+// unaffected by it; the questions stay grounded in the student's own notes
+// whichever model writes them.
 //
 // The id is sent verbatim as `model` in the Groq request. An id Groq no longer
 // serves falls back to the default rather than failing the quiz — see

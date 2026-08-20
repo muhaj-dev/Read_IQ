@@ -20,6 +20,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { PdfExtractHost } from '@/components/pdf-extract-host';
 import { Colors } from '@/constants/theme';
 import { useChatStore } from '@/store/use-chat-store';
 import { useDeadlinesStore } from '@/store/use-deadlines-store';
@@ -83,6 +84,8 @@ export default function RootLayout() {
             animation: 'fade',
           }}
         />
+        {/* Headless pdf.js runner for Upload — renders nothing until a PDF is queued. */}
+        <PdfExtractHost />
       </ThemeProvider>
     </GestureHandlerRootView>
   );
